@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/camera_service.dart';
 import '../models/recording_data.dart';
 import '../widgets/pothole_prompt_overlay.dart';
+import '../widgets/threshold_adjustment_popup.dart';
 import 'recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -179,19 +180,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // Test function to simulate a pothole detection
-  void _simulatePotholeDetection() {
-    if (!_cameraService.isRecording || _showingPotholePrompt) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Start recording first to simulate pothole detection')),
-      );
-      return;
-    }
+  // New method to show the threshold adjustment popup
+  void _showThresholdAdjustment() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
-    setState(() {
-      _showingPotholePrompt = true;
-      _currentSpikeTime = DateTime.now();
-    });
+    showDialog(
+      context: context,
+      builder: (context) => ThresholdAdjustmentPopup(
+        currentThreshold: _cameraService.bumpThreshold,
+        onThresholdChanged: (value) {
+          _cameraService.setBumpThreshold(value);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Bump sensitivity threshold set to ${value.toStringAsFixed(1)}')),
+          );
+        },
+        isLandscape: isLandscape,
+      ),
+    );
   }
 
   // Handle pothole prompt response
@@ -344,19 +349,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                     SizedBox(height: 16.h),  // Less spacing
 
-                    // Test Pothole Button - smaller in landscape
+                    // Sensitivity Settings Button - smaller in landscape
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         FloatingActionButton.small(  // Small size
-                          heroTag: 'testPothole',
-                          backgroundColor: Colors.blue.withOpacity(0.8),
-                          onPressed: _simulatePotholeDetection,
-                          child: const Icon(Icons.warning, color: Colors.white, size: 20),  // Smaller icon
+                          heroTag: 'sensitivity',
+                          backgroundColor: Colors.amber.withOpacity(0.8),
+                          onPressed: _showThresholdAdjustment,
+                          child: const Icon(Icons.tune, color: Colors.white, size: 20),  // Changed icon
                         ),
                         SizedBox(height: 4.h),  // Less spacing
                         Text(
-                          'Test',
+                          'Settings',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 10.sp,  // Smaller text
@@ -473,13 +478,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
 
-                  // Test Pothole Button
+                  // Sensitivity Settings Button
                   FloatingActionButton(
-                    heroTag: 'testPothole',
-                    backgroundColor: Colors.blue.withOpacity(0.8),
-                    onPressed: _simulatePotholeDetection,
-                    tooltip: 'Simulate Pothole Detection',
-                    child: const Icon(Icons.warning, color: Colors.white),
+                    heroTag: 'sensitivity',
+                    backgroundColor: Colors.amber.withOpacity(0.8),
+                    onPressed: _showThresholdAdjustment,
+                    tooltip: 'Adjust Sensitivity Settings',
+                    child: const Icon(Icons.tune, color: Colors.white),  // Changed icon to tune
                   ),
                 ],
               ),

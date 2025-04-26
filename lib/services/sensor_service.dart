@@ -30,12 +30,19 @@ class SensorService {
   double _baselineAccelMagnitude = 9.8; // Starting with standard gravity
   int _calibrationReadings = 0;
   static const int _calibrationSize = 200; // Calibration period (approx 2 seconds)
-  static const double _bumpThreshold = 5.0; // Adjust this based on testing
+  static double _bumpThreshold = 5.0;
   static const int _cooldownMs = 3000; // Minimum time between detections (3 seconds)
   DateTime? _lastDetectionTime;
 
   // Callback function that will be set by CameraService
   Function(DateTime)? onPotholeDetected;
+
+  double get bumpThreshold => _bumpThreshold;
+
+  void setBumpThreshold(double value) {
+    _bumpThreshold = value;
+    print('Bump threshold set to: $value');
+  }
 
   void startRecording({String recordingDirPath = ''}) {
     if (_isRecording) return;

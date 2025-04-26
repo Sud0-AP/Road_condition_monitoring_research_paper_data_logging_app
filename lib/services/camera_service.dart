@@ -24,6 +24,12 @@ class CameraService {
     _sensorService.onPotholeDetected = _handlePotholeDetection;
   }
 
+  double get bumpThreshold => _sensorService.bumpThreshold;
+
+  void setBumpThreshold(double value) {
+    _sensorService.setBumpThreshold(value);
+  }
+
   // Handle pothole detection from sensor service
   void _handlePotholeDetection(DateTime detectionTime) {
     // Only trigger UI callback if we're recording and a callback is set
