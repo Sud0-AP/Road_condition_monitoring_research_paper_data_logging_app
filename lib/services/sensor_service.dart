@@ -18,7 +18,13 @@ class SensorService {
   DateTime? _lastAccelReading;
   DateTime? _lastGyroReading;
 
-  void startRecording() {
+  // For pothole annotations
+  Map<int, Map<String, dynamic>> _annotations = {};
+
+  // For file saving
+  String _recordingDirPath = '';
+
+  void startRecording({String recordingDirPath = ''}) {
     if (_isRecording) return;
 
     _isRecording = true;
@@ -27,14 +33,18 @@ class SensorService {
     _recordingStartTime = _startTime;
     _lastAccelReading = null;
     _lastGyroReading = null;
+    _annotations = {};
+    _recordingDirPath = recordingDirPath;
 
-    // Add header with metadata
+    // Add header with metadata and annotation columns
     _sensorData.add([
       'timestamp_ms',
       'sensor_type',
       'x',
       'y',
       'z',
+      'is_pothole',     // yes, no, or unmarked
+      'user_feedback',  // user_confirmed, user_rejected, timeout
       'recording_start_time',
       DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(_recordingStartTime!),
     ]);
@@ -56,8 +66,9 @@ class SensorService {
               event.x,
               event.y,
               event.z,
-              '',
-              '',
+              '',  // is_pothole (will be filled later)
+              '',  // user_feedback (will be filled later)
+              '',  // empty for other columns
             ]);
 
             _lastAccelReading = now;
@@ -87,8 +98,9 @@ class SensorService {
               event.x,
               event.y,
               event.z,
-              '',
-              '',
+              '',  // is_pothole (will be filled later)
+              '',  // user_feedback (will be filled later)
+              '',  // empty for other columns
             ]);
 
             _lastGyroReading = now;
@@ -102,7 +114,22 @@ class SensorService {
     }
   }
 
-  Future<String> stopRecording(String recordingId) async {
+  // Method to annotate a pothole event
+  void annotatePothole(DateTime detectionTime, bool isPothole, String feedback) {
+    if (_startTime == null || !_isRecording) return;
+
+    final detectionTimestampMs = detectionTime.difference(_startTime!).inMilliseconds;
+
+    _annotations[detectionTimestampMs] = {
+      'isPothole': isPothole,
+      'feedback': feedback,
+      'timestamp': detectionTimestampMs,
+    };
+
+    print('Annotated pothole at ${detectionTimestampMs}ms: isPothole=$isPothole, feedback=$feedback');
+  }
+
+  Future<String> stopRecording(String videoPath) async {
     if (!_isRecording) return '';
 
     _isRecording = false;
@@ -115,6 +142,8 @@ class SensorService {
     final endTime = DateTime.now();
     _sensorData.add([
       'end_timestamp',
+      '',
+      '',
       '',
       '',
       '',
@@ -133,6 +162,8 @@ class SensorService {
       '',
       '',
       '',
+      '',
+      '',
     ]);
 
     // Add sampling rate info
@@ -144,16 +175,80 @@ class SensorService {
       '',
       '',
       '',
+      '',
+      '',
     ]);
 
-    // Save data to temporary file first
-    final tempDir = await getTemporaryDirectory();
-    final tempFile = File('${tempDir.path}/temp_sensor_data.csv');
+    // Add annotations info
+    _sensorData.add([
+      'annotations_count',
+      _annotations.length,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ]);
+
+    // Apply annotations to the data
+    for (int i = 1; i < _sensorData.length; i++) {
+      var row = _sensorData[i];
+
+      // Skip metadata rows
+      if (row[1] != 'accelerometer' && row[1] != 'gyroscope') {
+        continue;
+      }
+
+      int timestamp = row[0] as int;
+
+      // Check each annotation to see if this data point falls within its window
+      for (var entry in _annotations.entries) {
+        int detectionTime = entry.key;
+        var annotation = entry.value;
+
+        // If within 10 seconds before or after a detection
+        if (timestamp >= detectionTime - 10000 && timestamp <= detectionTime + 10000) {
+          // Mark as pothole or not based on feedback
+          if (annotation['feedback'] == 'yes') {
+            row[5] = 'yes';
+            row[6] = 'user_confirmed';
+          } else if (annotation['feedback'] == 'no') {
+            row[5] = 'no';
+            row[6] = 'user_rejected';
+          } else if (annotation['feedback'] == 'timeout') {
+            row[5] = 'unmarked';
+            row[6] = 'timeout';
+          }
+          break;
+        }
+      }
+    }
+
+    // Determine where to save the CSV file
+    String csvPath;
+    if (_recordingDirPath.isNotEmpty) {
+      // Use the provided directory path
+      csvPath = '$_recordingDirPath/sensor_data.csv';
+    } else {
+      // Extract directory from the video path
+      final directory = File(videoPath).parent;
+      csvPath = '${directory.path}/sensor_data.csv';
+    }
+
+    // Save data to CSV file
+    final file = File(csvPath);
+
+    // Ensure the directory exists
+    if (!await file.parent.exists()) {
+      await file.parent.create(recursive: true);
+    }
 
     String csv = const ListToCsvConverter().convert(_sensorData);
-    await tempFile.writeAsString(csv);
+    await file.writeAsString(csv);
 
-    return tempFile.path;
+    return csvPath;
   }
 
   void dispose() {

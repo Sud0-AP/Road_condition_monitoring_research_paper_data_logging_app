@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +14,10 @@ class CameraService {
   List<CameraDescription> cameras = [];
   bool isInitialized = false;
   bool isRecording = false;
+
+  // Make sensor service accessible
   final SensorService _sensorService = SensorService();
+  SensorService get sensorService => _sensorService;
 
   Future<void> initializeCamera() async {
     try {
@@ -36,6 +40,9 @@ class CameraService {
       );
 
       await controller!.initialize();
+
+      // Don't lock the orientation - allow the app to adapt
+
       isInitialized = true;
     } catch (e) {
       print('Error initializing camera: $e');
@@ -67,7 +74,7 @@ class CameraService {
     }
 
     // Start sensor recording
-    _sensorService.startRecording();
+    _sensorService.startRecording(recordingDirPath: recordingDir.path);
 
     // Start video recording
     await controller!.startVideoRecording();
@@ -89,7 +96,7 @@ class CameraService {
     final XFile videoFile = await controller!.stopVideoRecording();
 
     // Stop sensor recording
-    final String sensorDataPath = await _sensorService.stopRecording(recordingData.id);
+    final String sensorDataPath = await _sensorService.stopRecording(recordingData.videoPath);
 
     // Move video file to our storage location
     final File videoSource = File(videoFile.path);
@@ -111,19 +118,8 @@ class CameraService {
       } catch (e) {
         print('Warning: Could not delete original video file: $e');
       }
-
-      // Copy sensor data to the same folder
-      final tempSensorFile = File(sensorDataPath);
-      if (await tempSensorFile.exists()) {
-        await tempSensorFile.copy(recordingData.sensorDataPath);
-        try {
-          await tempSensorFile.delete();
-        } catch (e) {
-          print('Warning: Could not delete temporary sensor file: $e');
-        }
-      }
     } catch (e) {
-      print('Error copying files: $e');
+      print('Error copying video file: $e');
       // If copy fails, use the original file path
       recordingData = RecordingData(
         id: recordingData.id,

@@ -1,11 +1,11 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/camera_service.dart';
 import '../models/recording_data.dart';
+import '../widgets/pothole_prompt_overlay.dart';
 import 'recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -20,6 +20,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   RecordingData? _currentRecording;
   bool _isInitializing = true;
   String _errorMessage = '';
+
+  // For pothole prompt
+  bool _showingPotholePrompt = false;
+  DateTime? _currentSpikeTime;
 
   @override
   void initState() {
@@ -161,8 +165,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  // Test function to simulate a pothole detection
+  void _simulatePotholeDetection() {
+    if (!_cameraService.isRecording || _showingPotholePrompt) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Start recording first to simulate pothole detection')),
+      );
+      return;
+    }
+
+    setState(() {
+      _showingPotholePrompt = true;
+      _currentSpikeTime = DateTime.now();
+    });
+  }
+
+  // Handle pothole prompt response
+  void _handlePotholeResponse(bool isPothole) {
+    if (_currentSpikeTime != null && _currentRecording != null) {
+      // Access the sensor service through camera service
+      _cameraService.sensorService.annotatePothole(
+          _currentSpikeTime!,
+          isPothole,
+          isPothole ? 'yes' : 'no'
+      );
+
+      // Show feedback to user
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isPothole
+              ? 'Marked as pothole'
+              : 'Marked as not a pothole'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+
+    setState(() {
+      _showingPotholePrompt = false;
+      _currentSpikeTime = null;
+    });
+  }
+
+  // Handle pothole prompt timeout
+  void _handlePromptTimeout() {
+    if (_currentSpikeTime != null && _currentRecording != null) {
+      _cameraService.sensorService.annotatePothole(
+          _currentSpikeTime!,
+          false,
+          'timeout'
+      );
+    }
+
+    setState(() {
+      _showingPotholePrompt = false;
+      _currentSpikeTime = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Get the current orientation
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
     if (_isInitializing) {
       return Scaffold(
         backgroundColor: Colors.black,
@@ -210,118 +275,249 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Camera Preview
-          SizedBox.expand(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: _cameraService.controller!.value.previewSize!.height,
-                height: _cameraService.controller!.value.previewSize!.width,
-                child: CameraPreview(_cameraService.controller!),
-              ),
-            ),
+          // Camera Preview - Using a consistent approach that works in both orientations
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            child: CameraPreview(_cameraService.controller!),
           ),
 
-          // Bottom Controls
-          Positioned(
-            bottom: 30.h,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                // Recordings Button
-                FloatingActionButton(
-                  heroTag: 'recordings',
-                  backgroundColor: Colors.black54,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const RecordingsScreen(),
-                      ),
-                    );
-                  },
-                  child: const Icon(Icons.folder, color: Colors.white),
-                ),
-
-                // Record Button
-                Column(
-                  mainAxisSize: MainAxisSize.min,
+          // Controls - positioned based on orientation
+          if (isLandscape)
+          // Landscape layout - controls on the right side, smaller buttons
+            Positioned(
+              right: 16.w,
+              top: 0,
+              bottom: 0,
+              child: SafeArea(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    FloatingActionButton.large(
-                      heroTag: 'record',
-                      backgroundColor: _cameraService.isRecording
-                          ? Colors.red.withOpacity(0.8)
-                          : Colors.white.withOpacity(0.8),
-                      onPressed: _toggleRecording,
-                      child: Icon(
-                        _cameraService.isRecording ? Icons.stop : Icons.fiber_manual_record,
-                        color: _cameraService.isRecording ? Colors.white : Colors.red,
-                        size: 36.sp,
-                      ),
-                    ),
-                    SizedBox(height: 8.h),
-                    Text(
-                      _cameraService.isRecording ? 'Stop' : 'Start Recording',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.bold,
-                        shadows: [
-                          Shadow(
-                            offset: Offset(1.0, 1.0),
-                            blurRadius: 3.0,
-                            color: Colors.black.withOpacity(0.7),
+                    // Record Button - smaller in landscape
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FloatingActionButton(  // Regular size instead of large
+                          heroTag: 'record',
+                          backgroundColor: _cameraService.isRecording
+                              ? Colors.red.withOpacity(0.8)
+                              : Colors.white.withOpacity(0.8),
+                          onPressed: _toggleRecording,
+                          child: Icon(
+                            _cameraService.isRecording ? Icons.stop : Icons.fiber_manual_record,
+                            color: _cameraService.isRecording ? Colors.white : Colors.red,
+                            size: 24.sp,  // Smaller icon
                           ),
-                        ],
-                      ),
+                        ),
+                        SizedBox(height: 4.h),  // Less spacing
+                        Text(
+                          _cameraService.isRecording ? 'Stop' : 'Start',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.sp,  // Smaller text
+                            fontWeight: FontWeight.bold,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(1.0, 1.0),
+                                blurRadius: 3.0,
+                                color: Colors.black.withOpacity(0.7),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    SizedBox(height: 16.h),  // Less spacing
+
+                    // Test Pothole Button - smaller in landscape
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FloatingActionButton.small(  // Small size
+                          heroTag: 'testPothole',
+                          backgroundColor: Colors.blue.withOpacity(0.8),
+                          onPressed: _simulatePotholeDetection,
+                          child: const Icon(Icons.warning, color: Colors.white, size: 20),  // Smaller icon
+                        ),
+                        SizedBox(height: 4.h),  // Less spacing
+                        Text(
+                          'Test',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.sp,  // Smaller text
+                            fontWeight: FontWeight.bold,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(1.0, 1.0),
+                                blurRadius: 3.0,
+                                color: Colors.black.withOpacity(0.7),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    SizedBox(height: 16.h),  // Less spacing
+
+                    // Recordings Button - smaller in landscape
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FloatingActionButton.small(  // Small size
+                          heroTag: 'recordings',
+                          backgroundColor: Colors.black54,
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const RecordingsScreen(),
+                              ),
+                            );
+                          },
+                          child: const Icon(Icons.folder, color: Colors.white, size: 20),  // Smaller icon
+                        ),
+                        SizedBox(height: 4.h),  // Less spacing
+                        Text(
+                          'Files',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.sp,  // Smaller text
+                            fontWeight: FontWeight.bold,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(1.0, 1.0),
+                                blurRadius: 3.0,
+                                color: Colors.black.withOpacity(0.7),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                // Placeholder for symmetry
-                const SizedBox(width: 56), // Same width as FloatingActionButton
-              ],
-            ),
-          ),
-
-          // Recording indicator
-          if (_cameraService.isRecording)
+              ),
+            )
+          else
+          // Portrait layout - controls at the bottom
             Positioned(
-              top: 50.h,
+              bottom: 30.h,
               left: 0,
               right: 0,
-              child: Center(
-                child: Container(
-                  padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20.r),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  // Recordings Button
+                  FloatingActionButton(
+                    heroTag: 'recordings',
+                    backgroundColor: Colors.black54,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const RecordingsScreen(),
+                        ),
+                      );
+                    },
+                    child: const Icon(Icons.folder, color: Colors.white),
                   ),
-                  child: Row(
+
+                  // Record Button
+                  Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 12.w,
-                        height: 12.h,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
+                      FloatingActionButton.large(
+                        heroTag: 'record',
+                        backgroundColor: _cameraService.isRecording
+                            ? Colors.red.withOpacity(0.8)
+                            : Colors.white.withOpacity(0.8),
+                        onPressed: _toggleRecording,
+                        child: Icon(
+                          _cameraService.isRecording ? Icons.stop : Icons.fiber_manual_record,
+                          color: _cameraService.isRecording ? Colors.white : Colors.red,
+                          size: 36.sp,
                         ),
                       ),
-                      SizedBox(width: 8.w),
+                      SizedBox(height: 8.h),
                       Text(
-                        'RECORDING',
+                        _cameraService.isRecording ? 'Stop' : 'Start Recording',
                         style: TextStyle(
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
                           fontSize: 14.sp,
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(
+                              offset: Offset(1.0, 1.0),
+                              blurRadius: 3.0,
+                              color: Colors.black.withOpacity(0.7),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
+
+                  // Test Pothole Button
+                  FloatingActionButton(
+                    heroTag: 'testPothole',
+                    backgroundColor: Colors.blue.withOpacity(0.8),
+                    onPressed: _simulatePotholeDetection,
+                    child: const Icon(Icons.warning, color: Colors.white),
+                    tooltip: 'Simulate Pothole Detection',
+                  ),
+                ],
+              ),
+            ),
+
+          // Recording indicator - positioned based on orientation
+          if (_cameraService.isRecording)
+            Positioned(
+              top: isLandscape ? 20.h : 50.h,
+              left: isLandscape ? 20.w : 0,
+              right: isLandscape ? null : 0,
+              child: SafeArea(
+                child: Center(
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20.r),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 12.w,
+                          height: 12.h,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        Text(
+                          'RECORDING',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14.sp,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
+            ),
+
+          // Pothole Prompt Overlay - orientation aware
+          if (_showingPotholePrompt)
+            PotholePromptOverlay(
+              onResponse: _handlePotholeResponse,
+              onTimeout: _handlePromptTimeout,
+              isLandscape: isLandscape,
             ),
         ],
       ),

@@ -44,14 +44,22 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
           final videoFile = File('${entity.path}/video.mp4');
           final sensorFile = File('${entity.path}/sensor_data.csv');
 
-          if (await videoFile.exists() && await sensorFile.exists()) {
+          // Check if either file exists - sometimes one might be missing
+          if (await videoFile.exists() || await sensorFile.exists()) {
             // Parse timestamp from folder name
             final dateString = recordingId.replaceAll('Recording_', '');
             DateTime timestamp;
             try {
               timestamp = DateFormat('yyyyMMdd_HHmmss').parse(dateString);
             } catch (e) {
-              timestamp = await videoFile.lastModified();
+              // Fallback: use file modification time
+              if (await videoFile.exists()) {
+                timestamp = await videoFile.lastModified();
+              } else if (await sensorFile.exists()) {
+                timestamp = await sensorFile.lastModified();
+              } else {
+                timestamp = DateTime.now();
+              }
             }
 
             recordings.add(RecordingData(
@@ -60,6 +68,10 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
               sensorDataPath: sensorFile.path,
               timestamp: timestamp,
             ));
+
+            print('Found recording: ${entity.path}');
+            print('Video exists: ${await videoFile.exists()}');
+            print('Sensor data exists: ${await sensorFile.exists()}');
           }
         }
       }
@@ -71,7 +83,10 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
         _recordings = recordings;
         _isLoading = false;
       });
+
+      print('Loaded ${recordings.length} recordings');
     } catch (e) {
+      print('Error loading recordings: $e');
       setState(() {
         _isLoading = false;
       });
@@ -126,36 +141,7 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
     }
   }
 
-  // View files directly
-  Future<void> _viewFiles(RecordingData recording) async {
-    try {
-      // Try to open the folder containing the files
-      final directory = Directory(recording.videoPath).parent;
-      final uri = Uri.parse('content://com.android.externalstorage.documents/document/primary%3ADownload%2FPotholeDetector%2F${directory.path.split('/').last}');
-
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else {
-        // Fallback: try to open the Downloads/PotholeDetector folder
-        final baseUri = Uri.parse('content://com.android.externalstorage.documents/document/primary%3ADownload%2FPotholeDetector');
-        if (await canLaunchUrl(baseUri)) {
-          await launchUrl(baseUri);
-        } else {
-          // Last resort: show info about the files
-          if (!mounted) return;
-          _showFileInfo(recording);
-        }
-      }
-    } catch (e) {
-      print('Error viewing files: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error opening files: $e')),
-      );
-    }
-  }
-
-  // Show file info
+  // Show file info and location
   Future<void> _showFileInfo(RecordingData recording) async {
     final videoFile = File(recording.videoPath);
     final sensorFile = File(recording.sensorDataPath);
@@ -196,34 +182,39 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
     );
   }
 
-  // Open the main Downloads/PotholeDetector folder
-  Future<void> _openDownloadsFolder() async {
+  // Export and try to open recording folder
+  Future<void> _openRecordingFolder(RecordingData recording) async {
     try {
-      final uri = Uri.parse('content://com.android.externalstorage.documents/document/primary%3ADownload%2FPotholeDetector');
+      final directory = File(recording.videoPath).parent;
+
+      // Try to open the folder using a file explorer
+      final uri = Uri.parse('content://com.android.externalstorage.documents/document/primary%3ADownload%2FPotholeDetector%2F${directory.path.split('/').last}');
 
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri);
       } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open Downloads folder. Files are located in /Download/PotholeDetector/'),
-            duration: Duration(seconds: 4),
-          ),
-        );
+        // Fallback: try to open the Downloads/PotholeDetector folder
+        final baseUri = Uri.parse('content://com.android.externalstorage.documents/document/primary%3ADownload%2FPotholeDetector');
+        if (await canLaunchUrl(baseUri)) {
+          await launchUrl(baseUri);
+        } else {
+          // Last resort: show info about the files
+          if (!mounted) return;
+          _showFileInfo(recording);
+        }
       }
     } catch (e) {
-      print('Error opening downloads folder: $e');
+      print('Error viewing files: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error opening Downloads folder: $e')),
+        SnackBar(content: Text('Error opening files: $e')),
       );
     }
   }
 
   Future<void> _deleteRecording(RecordingData recording) async {
     try {
-      final directory = Directory(recording.videoPath).parent;
+      final directory = File(recording.videoPath).parent;
       await directory.delete(recursive: true);
 
       setState(() {
@@ -250,11 +241,6 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
         backgroundColor: Colors.black,
         actions: [
           IconButton(
-            icon: const Icon(Icons.folder),
-            onPressed: _openDownloadsFolder,
-            tooltip: 'Open Downloads Folder',
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadRecordings,
           ),
@@ -272,11 +258,6 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
             Text(
               'No recordings yet',
               style: TextStyle(fontSize: 18.sp, color: Colors.grey),
-            ),
-            SizedBox(height: 24.h),
-            ElevatedButton(
-              onPressed: _openDownloadsFolder,
-              child: const Text('Open Downloads Folder'),
             ),
           ],
         ),
@@ -312,7 +293,7 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
                     ),
                   ),
                   subtitle: Text(date),
-                  onTap: () => _viewFiles(recording),
+                  onTap: () => _showFileInfo(recording),
                 ),
                 Padding(
                   padding: EdgeInsets.only(bottom: 12.h, left: 8.w, right: 8.w),
@@ -322,7 +303,7 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
                       _actionButton(
                         icon: Icons.folder_open,
                         label: 'Open',
-                        onPressed: () => _viewFiles(recording),
+                        onPressed: () => _openRecordingFolder(recording),
                       ),
                       _actionButton(
                         icon: Icons.share,
