@@ -8,11 +8,11 @@ class PotholePromptOverlay extends StatefulWidget {
   final bool isLandscape;
 
   const PotholePromptOverlay({
-    Key? key,
+    super.key,
     required this.onResponse,
     required this.onTimeout,
     this.isLandscape = false,
-  }) : super(key: key);
+  });
 
   @override
   State<PotholePromptOverlay> createState() => _PotholePromptOverlayState();

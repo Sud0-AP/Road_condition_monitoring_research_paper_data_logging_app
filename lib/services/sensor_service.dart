@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:csv/csv.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:intl/intl.dart';
 
@@ -24,6 +24,19 @@ class SensorService {
   // For file saving
   String _recordingDirPath = '';
 
+  // For bump detection
+  final List<AccelerometerEvent> _recentAccelReadings = [];
+  static const int _bufferSize = 50; // Store last 50 readings (approx 0.5 seconds at 100Hz)
+  double _baselineAccelMagnitude = 9.8; // Starting with standard gravity
+  int _calibrationReadings = 0;
+  static const int _calibrationSize = 200; // Calibration period (approx 2 seconds)
+  static const double _bumpThreshold = 5.0; // Adjust this based on testing
+  static const int _cooldownMs = 3000; // Minimum time between detections (3 seconds)
+  DateTime? _lastDetectionTime;
+
+  // Callback function that will be set by CameraService
+  Function(DateTime)? onPotholeDetected;
+
   void startRecording({String recordingDirPath = ''}) {
     if (_isRecording) return;
 
@@ -36,6 +49,12 @@ class SensorService {
     _annotations = {};
     _recordingDirPath = recordingDirPath;
 
+    // Reset bump detection variables
+    _recentAccelReadings.clear();
+    _calibrationReadings = 0;
+    _baselineAccelMagnitude = 9.8; // Reset to standard gravity
+    _lastDetectionTime = null;
+
     // Add header with metadata and annotation columns
     _sensorData.add([
       'timestamp_ms',
@@ -43,6 +62,7 @@ class SensorService {
       'x',
       'y',
       'z',
+      'magnitude', // Add magnitude column
       'is_pothole',     // yes, no, or unmarked
       'user_feedback',  // user_confirmed, user_rejected, timeout
       'recording_start_time',
@@ -59,6 +79,12 @@ class SensorService {
           if (_lastAccelReading == null ||
               now.difference(_lastAccelReading!).inMilliseconds >= _samplingIntervalMs) {
 
+            // Calculate magnitude for detection
+            final magnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
+
+            // Process for bump detection
+            _processBumpDetection(event, magnitude, now);
+
             final timestamp = now.difference(_startTime!).inMilliseconds;
             _sensorData.add([
               timestamp,
@@ -66,6 +92,7 @@ class SensorService {
               event.x,
               event.y,
               event.z,
+              magnitude,  // Store magnitude in data
               '',  // is_pothole (will be filled later)
               '',  // user_feedback (will be filled later)
               '',  // empty for other columns
@@ -98,6 +125,7 @@ class SensorService {
               event.x,
               event.y,
               event.z,
+              '',  // magnitude (only for accelerometer)
               '',  // is_pothole (will be filled later)
               '',  // user_feedback (will be filled later)
               '',  // empty for other columns
@@ -112,6 +140,65 @@ class SensorService {
     } catch (e) {
       print("Failed to initialize gyroscope: $e");
     }
+  }
+
+  // Process accelerometer data for bump detection
+  void _processBumpDetection(AccelerometerEvent event, double magnitude, DateTime now) {
+    // Add to recent readings buffer
+    _recentAccelReadings.add(event);
+    if (_recentAccelReadings.length > _bufferSize) {
+      _recentAccelReadings.removeAt(0); // Remove oldest reading
+    }
+
+    // First calibrate to establish baseline
+    if (_calibrationReadings < _calibrationSize) {
+      // During calibration, update baseline
+      _baselineAccelMagnitude = (_baselineAccelMagnitude * _calibrationReadings + magnitude) / (_calibrationReadings + 1);
+      _calibrationReadings++;
+      return; // Skip detection during calibration
+    }
+
+    // Check for cooldown period
+    if (_lastDetectionTime != null) {
+      final timeSinceLastDetection = now.difference(_lastDetectionTime!).inMilliseconds;
+      if (timeSinceLastDetection < _cooldownMs) {
+        return; // Still in cooldown period
+      }
+    }
+
+    // Calculate variance and standard deviation in recent readings
+    double sum = 0;
+    double sumSquared = 0;
+
+    for (var accel in _recentAccelReadings) {
+      double readingMagnitude = sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+      sum += readingMagnitude;
+      sumSquared += readingMagnitude * readingMagnitude;
+    }
+
+    double mean = sum / _recentAccelReadings.length;
+    double variance = (sumSquared / _recentAccelReadings.length) - (mean * mean);
+    double stdDev = sqrt(variance);
+
+    // Calculate delta from baseline (how much current magnitude differs from baseline)
+    double delta = abs(magnitude - _baselineAccelMagnitude);
+
+    // Check if magnitude exceeds threshold and has significant deviation
+    if (delta > _bumpThreshold && stdDev > 1.0) {
+      // We detected a bump!
+      _lastDetectionTime = now;
+
+      // Notify via callback if set
+      if (onPotholeDetected != null) {
+        onPotholeDetected!(now);
+      }
+
+      print('Bump detected! Magnitude: $magnitude, Delta: $delta, StdDev: $stdDev');
+    }
+
+    // Gradually update baseline (adaptive baseline)
+    // Use a small learning factor to slowly adapt to changing conditions
+    _baselineAccelMagnitude = _baselineAccelMagnitude * 0.99 + magnitude * 0.01;
   }
 
   // Method to annotate a pothole event
@@ -142,6 +229,7 @@ class SensorService {
     final endTime = DateTime.now();
     _sensorData.add([
       'end_timestamp',
+      '',
       '',
       '',
       '',
@@ -212,14 +300,14 @@ class SensorService {
         if (timestamp >= detectionTime - 10000 && timestamp <= detectionTime + 10000) {
           // Mark as pothole or not based on feedback
           if (annotation['feedback'] == 'yes') {
-            row[5] = 'yes';
-            row[6] = 'user_confirmed';
+            row[6] = 'yes';
+            row[7] = 'user_confirmed';
           } else if (annotation['feedback'] == 'no') {
-            row[5] = 'no';
-            row[6] = 'user_rejected';
+            row[6] = 'no';
+            row[7] = 'user_rejected';
           } else if (annotation['feedback'] == 'timeout') {
-            row[5] = 'unmarked';
-            row[6] = 'timeout';
+            row[6] = 'unmarked';
+            row[7] = 'timeout';
           }
           break;
         }
@@ -255,4 +343,8 @@ class SensorService {
     _accelerometerSubscription?.cancel();
     _gyroscopeSubscription?.cancel();
   }
+}
+
+double abs(double value) {
+  return value < 0 ? -value : value;
 }

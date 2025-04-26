@@ -1,9 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 import '../models/recording_data.dart';
@@ -18,6 +15,22 @@ class CameraService {
   // Make sensor service accessible
   final SensorService _sensorService = SensorService();
   SensorService get sensorService => _sensorService;
+
+  // Callback for pothole detection
+  Function(DateTime)? onPotholeDetected;
+
+  CameraService() {
+    // Set the callback in sensor service that will notify this class
+    _sensorService.onPotholeDetected = _handlePotholeDetection;
+  }
+
+  // Handle pothole detection from sensor service
+  void _handlePotholeDetection(DateTime detectionTime) {
+    // Only trigger UI callback if we're recording and a callback is set
+    if (isRecording && onPotholeDetected != null) {
+      onPotholeDetected!(detectionTime);
+    }
+  }
 
   Future<void> initializeCamera() async {
     try {

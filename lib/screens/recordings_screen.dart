@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/recording_data.dart';
 
 class RecordingsScreen extends StatefulWidget {
-  const RecordingsScreen({Key? key}) : super(key: key);
+  const RecordingsScreen({super.key});
 
   @override
   State<RecordingsScreen> createState() => _RecordingsScreenState();

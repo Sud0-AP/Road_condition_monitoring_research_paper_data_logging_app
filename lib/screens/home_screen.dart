@@ -9,7 +9,7 @@ import '../widgets/pothole_prompt_overlay.dart';
 import 'recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -30,6 +30,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _requestPermissionsAndInitialize();
+
+    // Set the pothole detection callback
+    _cameraService.onPotholeDetected = _handleRealPotholeDetection;
+  }
+
+// Add this method to handle real pothole detection events
+  void _handleRealPotholeDetection(DateTime detectionTime) {
+    // Only show prompt if not already showing one and we're recording
+    if (!_showingPotholePrompt && _cameraService.isRecording) {
+      setState(() {
+        _showingPotholePrompt = true;
+        _currentSpikeTime = detectionTime;
+      });
+    }
   }
 
   @override
@@ -229,9 +243,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
     if (_isInitializing) {
-      return Scaffold(
+      return const Scaffold(
         backgroundColor: Colors.black,
-        body: const Center(
+        body: Center(
           child: CircularProgressIndicator(),
         ),
       );
@@ -276,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Stack(
         children: [
           // Camera Preview - Using a consistent approach that works in both orientations
-          Container(
+          SizedBox(
             width: double.infinity,
             height: double.infinity,
             child: CameraPreview(_cameraService.controller!),
@@ -449,7 +463,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           fontWeight: FontWeight.bold,
                           shadows: [
                             Shadow(
-                              offset: Offset(1.0, 1.0),
+                              offset: const Offset(1.0, 1.0),
                               blurRadius: 3.0,
                               color: Colors.black.withOpacity(0.7),
                             ),
@@ -464,8 +478,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     heroTag: 'testPothole',
                     backgroundColor: Colors.blue.withOpacity(0.8),
                     onPressed: _simulatePotholeDetection,
-                    child: const Icon(Icons.warning, color: Colors.white),
                     tooltip: 'Simulate Pothole Detection',
+                    child: const Icon(Icons.warning, color: Colors.white),
                   ),
                 ],
               ),
