@@ -4,15 +4,12 @@ import 'dart:math';
 import 'package:csv/csv.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:intl/intl.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
 class SensorService {
   List<List<dynamic>> _sensorData = [];
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
-  StreamSubscription<Position>? _positionSubscription;
-  Timer? _gpsTimer;
   bool _isRecording = false;
   DateTime? _startTime;
   DateTime? _recordingStartTime;
@@ -45,7 +42,6 @@ class SensorService {
   // Last sensor readings to ensure fixed rate
   AccelerometerEvent? _lastAccelEvent;
   GyroscopeEvent? _lastGyroEvent;
-  Position? _lastPosition;
 
   // Callback function that will be set by CameraService
   Function(DateTime)? onPotholeDetected;
@@ -87,10 +83,6 @@ class SensorService {
       'magnitude',
       'is_pothole',
       'user_feedback',
-      'latitude',      // GPS data
-      'longitude',
-      'altitude',
-      'speed',
       'recording_start_time',
       DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(_recordingStartTime!),
     ]);
@@ -125,10 +117,6 @@ class SensorService {
             magnitude,
             '',  // is_pothole (will be filled later)
             '',  // user_feedback (will be filled later)
-            _lastPosition?.latitude ?? '',  // GPS data
-            _lastPosition?.longitude ?? '',
-            _lastPosition?.altitude ?? '',
-            _lastPosition?.speed ?? '',
             '',  // empty for other columns
           ]);
         }
@@ -159,87 +147,12 @@ class SensorService {
             '',  // magnitude (only for accelerometer)
             '',  // is_pothole
             '',  // user_feedback
-            _lastPosition?.latitude ?? '',  // GPS data
-            _lastPosition?.longitude ?? '',
-            _lastPosition?.altitude ?? '',
-            _lastPosition?.speed ?? '',
             '',  // empty for other columns
           ]);
         }
       });
     } catch (e) {
       print("Failed to initialize gyroscope: $e");
-    }
-
-    // Start GPS recording every 10 seconds
-    try {
-      _startGPSTracking();
-
-      // Record GPS position every 10 seconds
-      _gpsTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-        if (_isRecording && _lastPosition != null) {
-          final timestamp = DateTime.now().difference(_startTime!).inMilliseconds;
-
-          _sensorData.add([
-            timestamp,
-            'gps',
-            '',  // x
-            '',  // y
-            '',  // z
-            '',  // magnitude
-            '',  // is_pothole
-            '',  // user_feedback
-            _lastPosition!.latitude,
-            _lastPosition!.longitude,
-            _lastPosition!.altitude,
-            _lastPosition!.speed,
-            '',  // empty for other columns
-          ]);
-        }
-      });
-    } catch (e) {
-      print("Failed to initialize GPS tracking: $e");
-    }
-  }
-
-  // Start GPS position streaming
-  Future<void> _startGPSTracking() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print('Location services are disabled');
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          print('Location permissions are denied');
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        print('Location permissions are permanently denied');
-        return;
-      }
-
-      // Get initial position
-      Position position = await Geolocator.getCurrentPosition();
-      _lastPosition = position;
-
-      // Listen for position updates
-      _positionSubscription = Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            distanceFilter: 5,
-          )
-      ).listen((Position position) {
-        _lastPosition = position;
-      });
-    } catch (e) {
-      print("Error starting GPS tracking: $e");
     }
   }
 
@@ -387,10 +300,8 @@ class SensorService {
     // Stop all subscriptions and timers
     await _accelerometerSubscription?.cancel();
     await _gyroscopeSubscription?.cancel();
-    await _positionSubscription?.cancel();
     _accelerometerTimer?.cancel();
     _gyroscopeTimer?.cancel();
-    _gpsTimer?.cancel();
 
     // Calculate actual sampling rates
     double accelSamplingRate = _calculateActualSamplingRate(_accelerometerTimestamps);
@@ -400,10 +311,6 @@ class SensorService {
     final endTime = DateTime.now();
     _sensorData.add([
       'end_timestamp',
-      '',
-      '',
-      '',
-      '',
       '',
       '',
       '',
@@ -427,10 +334,6 @@ class SensorService {
       '',
       '',
       '',
-      '',
-      '',
-      '',
-      '',
     ]);
 
     // Add actual sampling rate info
@@ -444,19 +347,11 @@ class SensorService {
       '',
       '',
       '',
-      '',
-      '',
-      '',
-      '',
     ]);
 
     _sensorData.add([
       'gyroscope_sampling_rate_hz',
       gyroSamplingRate.toStringAsFixed(2),
-      '',
-      '',
-      '',
-      '',
       '',
       '',
       '',
@@ -477,24 +372,16 @@ class SensorService {
       '',
       '',
       '',
-      '',
-      '',
-      '',
-      '',
     ]);
 
     // Add device info
     Map<String, dynamic> deviceData = await _getDeviceInfo();
-    _sensorData.add(['device_info', '', '', '', '', '', '', '', '', '', '', '', '']);
+    _sensorData.add(['device_info', '', '', '', '', '', '', '', '']);
 
     deviceData.forEach((key, value) {
       _sensorData.add([
         key,
         value.toString(),
-        '',
-        '',
-        '',
-        '',
         '',
         '',
         '',
@@ -510,7 +397,7 @@ class SensorService {
       var row = _sensorData[i];
 
       // Skip metadata rows
-      if (row[1] != 'accelerometer' && row[1] != 'gyroscope' && row[1] != 'gps') {
+      if (row[1] != 'accelerometer' && row[1] != 'gyroscope') {
         continue;
       }
 
@@ -567,10 +454,8 @@ class SensorService {
   void dispose() {
     _accelerometerSubscription?.cancel();
     _gyroscopeSubscription?.cancel();
-    _positionSubscription?.cancel();
     _accelerometerTimer?.cancel();
     _gyroscopeTimer?.cancel();
-    _gpsTimer?.cancel();
   }
 }
 
