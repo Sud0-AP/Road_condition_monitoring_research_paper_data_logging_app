@@ -82,6 +82,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         Permission.microphone,
         // For Android 11+ to access external storage
         Permission.manageExternalStorage,
+        // Add location permission
+        Permission.locationWhenInUse,
       ].request();
 
       // Check if all critical permissions are granted
@@ -99,6 +101,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           statuses[Permission.videos] != PermissionStatus.granted) {
         allGranted = false;
         missingPermissions += 'Storage, ';
+      }
+
+      // Check location permission
+      if (statuses[Permission.locationWhenInUse] != PermissionStatus.granted) {
+        allGranted = false;
+        missingPermissions += 'Location, ';
       }
 
       // Create the Downloads/PotholeDetector folder if it doesn't exist
@@ -126,7 +134,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
     }
   }
-
   Future<void> _initializeCamera() async {
     setState(() {
       _isInitializing = true;

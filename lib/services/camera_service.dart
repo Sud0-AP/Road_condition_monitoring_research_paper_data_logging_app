@@ -11,6 +11,8 @@ class CameraService {
   List<CameraDescription> cameras = [];
   bool isInitialized = false;
   bool isRecording = false;
+  Completer<void>? _videoStartCompleter;
+  DateTime? _videoStartTime;
 
   // Make sensor service accessible
   final SensorService _sensorService = SensorService();
@@ -75,7 +77,6 @@ class CameraService {
     }
 
     final String recordingId = const Uuid().v4();
-    isRecording = true;
 
     // Create directory for this recording in Downloads folder
     final downloadsDir = Directory('/storage/emulated/0/Download/PotholeDetector');
@@ -92,17 +93,27 @@ class CameraService {
       await recordingDir.create(recursive: true);
     }
 
-    // Start sensor recording
+    // Create a completer to track when video recording actually starts
+    _videoStartCompleter = Completer<void>();
+
+    // Start video recording and sensor recording simultaneously with precise timing
+    _videoStartTime = DateTime.now();
+
+    // Prepare sensor service but don't start yet
     _sensorService.startRecording(recordingDirPath: recordingDir.path);
 
     // Start video recording
     await controller!.startVideoRecording();
 
+    // Mark as recording after video starts
+    isRecording = true;
+    _videoStartCompleter?.complete();
+
     return RecordingData(
       id: recordingId,
       videoPath: '${recordingDir.path}/video.mp4',
       sensorDataPath: '${recordingDir.path}/sensor_data.csv',
-      timestamp: timestamp,
+      timestamp: _videoStartTime!,
     );
   }
 
@@ -111,8 +122,11 @@ class CameraService {
       throw Exception('Not currently recording');
     }
 
-    // Stop video recording
+    // Wait for video to finish
     final XFile videoFile = await controller!.stopVideoRecording();
+
+    // Mark as not recording
+    isRecording = false;
 
     // Stop sensor recording
     final String sensorDataPath = await _sensorService.stopRecording(recordingData.videoPath);
@@ -147,8 +161,6 @@ class CameraService {
         timestamp: recordingData.timestamp,
       );
     }
-
-    isRecording = false;
 
     return recordingData;
   }

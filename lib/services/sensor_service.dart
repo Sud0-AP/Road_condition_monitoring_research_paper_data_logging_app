@@ -4,19 +4,27 @@ import 'dart:math';
 import 'package:csv/csv.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 class SensorService {
   List<List<dynamic>> _sensorData = [];
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
+  StreamSubscription<Position>? _positionSubscription;
+  Timer? _gpsTimer;
   bool _isRecording = false;
   DateTime? _startTime;
   DateTime? _recordingStartTime;
 
-  // Set to approximately 100Hz (10ms intervals)
-  static const int _samplingIntervalMs = 10;
-  DateTime? _lastAccelReading;
-  DateTime? _lastGyroReading;
+  // Timestamp tracking for precise sampling rate calculation
+  List<int> _accelerometerTimestamps = [];
+  List<int> _gyroscopeTimestamps = [];
+
+  // Timer to enforce 100Hz sampling
+  Timer? _accelerometerTimer;
+  Timer? _gyroscopeTimer;
+  static const int _targetSamplingIntervalMs = 10; // 100Hz = 10ms interval
 
   // For pothole annotations
   Map<int, Map<String, dynamic>> _annotations = {};
@@ -33,6 +41,11 @@ class SensorService {
   static double _bumpThreshold = 5.0;
   static const int _cooldownMs = 3000; // Minimum time between detections (3 seconds)
   DateTime? _lastDetectionTime;
+
+  // Last sensor readings to ensure fixed rate
+  AccelerometerEvent? _lastAccelEvent;
+  GyroscopeEvent? _lastGyroEvent;
+  Position? _lastPosition;
 
   // Callback function that will be set by CameraService
   Function(DateTime)? onPotholeDetected;
@@ -51,10 +64,12 @@ class SensorService {
     _sensorData = [];
     _startTime = DateTime.now();
     _recordingStartTime = _startTime;
-    _lastAccelReading = null;
-    _lastGyroReading = null;
     _annotations = {};
     _recordingDirPath = recordingDirPath;
+
+    // Reset sampling rate tracking
+    _accelerometerTimestamps = [];
+    _gyroscopeTimestamps = [];
 
     // Reset bump detection variables
     _recentAccelReadings.clear();
@@ -69,83 +84,162 @@ class SensorService {
       'x',
       'y',
       'z',
-      'magnitude', // Add magnitude column
-      'is_pothole',     // yes, no, or unmarked
-      'user_feedback',  // user_confirmed, user_rejected, timeout
+      'magnitude',
+      'is_pothole',
+      'user_feedback',
+      'latitude',      // GPS data
+      'longitude',
+      'altitude',
+      'speed',
       'recording_start_time',
       DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(_recordingStartTime!),
     ]);
 
     try {
-      // Start accelerometer recording with rate limiting
+      // Start accelerometer recording with fixed timing
       _accelerometerSubscription = accelerometerEvents.listen((AccelerometerEvent event) {
-        if (_isRecording) {
+        _lastAccelEvent = event; // Save the most recent event
+      });
+
+      // Set up timer to read at exactly 100Hz
+      _accelerometerTimer = Timer.periodic(Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
+        if (_isRecording && _lastAccelEvent != null) {
           final now = DateTime.now();
+          final timestamp = now.difference(_startTime!).inMilliseconds;
+          _accelerometerTimestamps.add(timestamp);
 
-          // Check if we should record this sample (100Hz = sample every 10ms)
-          if (_lastAccelReading == null ||
-              now.difference(_lastAccelReading!).inMilliseconds >= _samplingIntervalMs) {
+          // Calculate magnitude for detection
+          final magnitude = sqrt(_lastAccelEvent!.x * _lastAccelEvent!.x +
+              _lastAccelEvent!.y * _lastAccelEvent!.y +
+              _lastAccelEvent!.z * _lastAccelEvent!.z);
 
-            // Calculate magnitude for detection
-            final magnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
+          // Process for bump detection
+          _processBumpDetection(_lastAccelEvent!, magnitude, now);
 
-            // Process for bump detection
-            _processBumpDetection(event, magnitude, now);
-
-            final timestamp = now.difference(_startTime!).inMilliseconds;
-            _sensorData.add([
-              timestamp,
-              'accelerometer',
-              event.x,
-              event.y,
-              event.z,
-              magnitude,  // Store magnitude in data
-              '',  // is_pothole (will be filled later)
-              '',  // user_feedback (will be filled later)
-              '',  // empty for other columns
-            ]);
-
-            _lastAccelReading = now;
-          }
+          _sensorData.add([
+            timestamp,
+            'accelerometer',
+            _lastAccelEvent!.x,
+            _lastAccelEvent!.y,
+            _lastAccelEvent!.z,
+            magnitude,
+            '',  // is_pothole (will be filled later)
+            '',  // user_feedback (will be filled later)
+            _lastPosition?.latitude ?? '',  // GPS data
+            _lastPosition?.longitude ?? '',
+            _lastPosition?.altitude ?? '',
+            _lastPosition?.speed ?? '',
+            '',  // empty for other columns
+          ]);
         }
-      }, onError: (error) {
-        print("Accelerometer error: $error");
       });
     } catch (e) {
       print("Failed to initialize accelerometer: $e");
     }
 
     try {
-      // Start gyroscope recording with rate limiting
+      // Start gyroscope recording with fixed timing
       _gyroscopeSubscription = gyroscopeEvents.listen((GyroscopeEvent event) {
-        if (_isRecording) {
+        _lastGyroEvent = event; // Save the most recent event
+      });
+
+      // Set up timer to read at exactly 100Hz
+      _gyroscopeTimer = Timer.periodic(Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
+        if (_isRecording && _lastGyroEvent != null) {
           final now = DateTime.now();
+          final timestamp = now.difference(_startTime!).inMilliseconds;
+          _gyroscopeTimestamps.add(timestamp);
 
-          // Check if we should record this sample (100Hz = sample every 10ms)
-          if (_lastGyroReading == null ||
-              now.difference(_lastGyroReading!).inMilliseconds >= _samplingIntervalMs) {
-
-            final timestamp = now.difference(_startTime!).inMilliseconds;
-            _sensorData.add([
-              timestamp,
-              'gyroscope',
-              event.x,
-              event.y,
-              event.z,
-              '',  // magnitude (only for accelerometer)
-              '',  // is_pothole (will be filled later)
-              '',  // user_feedback (will be filled later)
-              '',  // empty for other columns
-            ]);
-
-            _lastGyroReading = now;
-          }
+          _sensorData.add([
+            timestamp,
+            'gyroscope',
+            _lastGyroEvent!.x,
+            _lastGyroEvent!.y,
+            _lastGyroEvent!.z,
+            '',  // magnitude (only for accelerometer)
+            '',  // is_pothole
+            '',  // user_feedback
+            _lastPosition?.latitude ?? '',  // GPS data
+            _lastPosition?.longitude ?? '',
+            _lastPosition?.altitude ?? '',
+            _lastPosition?.speed ?? '',
+            '',  // empty for other columns
+          ]);
         }
-      }, onError: (error) {
-        print("Gyroscope error: $error");
       });
     } catch (e) {
       print("Failed to initialize gyroscope: $e");
+    }
+
+    // Start GPS recording every 10 seconds
+    try {
+      _startGPSTracking();
+
+      // Record GPS position every 10 seconds
+      _gpsTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+        if (_isRecording && _lastPosition != null) {
+          final timestamp = DateTime.now().difference(_startTime!).inMilliseconds;
+
+          _sensorData.add([
+            timestamp,
+            'gps',
+            '',  // x
+            '',  // y
+            '',  // z
+            '',  // magnitude
+            '',  // is_pothole
+            '',  // user_feedback
+            _lastPosition!.latitude,
+            _lastPosition!.longitude,
+            _lastPosition!.altitude,
+            _lastPosition!.speed,
+            '',  // empty for other columns
+          ]);
+        }
+      });
+    } catch (e) {
+      print("Failed to initialize GPS tracking: $e");
+    }
+  }
+
+  // Start GPS position streaming
+  Future<void> _startGPSTracking() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('Location services are disabled');
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          print('Location permissions are denied');
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        print('Location permissions are permanently denied');
+        return;
+      }
+
+      // Get initial position
+      Position position = await Geolocator.getCurrentPosition();
+      _lastPosition = position;
+
+      // Listen for position updates
+      _positionSubscription = Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 5,
+          )
+      ).listen((Position position) {
+        _lastPosition = position;
+      });
+    } catch (e) {
+      print("Error starting GPS tracking: $e");
     }
   }
 
@@ -223,19 +317,93 @@ class SensorService {
     print('Annotated pothole at ${detectionTimestampMs}ms: isPothole=$isPothole, feedback=$feedback');
   }
 
+  // Calculate actual sampling rate from timestamp data
+  double _calculateActualSamplingRate(List<int> timestamps) {
+    if (timestamps.length < 2) return 0;
+
+    // Calculate time differences between consecutive samples
+    List<int> intervals = [];
+    for (int i = 1; i < timestamps.length; i++) {
+      intervals.add(timestamps[i] - timestamps[i-1]);
+    }
+
+    // Calculate average interval
+    double avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
+
+    // Convert to Hz (1000 / interval in ms)
+    return 1000 / avgInterval;
+  }
+
+  // Get device info
+  Future<Map<String, dynamic>> _getDeviceInfo() async {
+    DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+    Map<String, dynamic> deviceData = <String, dynamic>{};
+
+    try {
+      if (Platform.isAndroid) {
+        AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+        deviceData = {
+          'platform': 'Android',
+          'device': androidInfo.device,
+          'model': androidInfo.model,
+          'manufacturer': androidInfo.manufacturer,
+          'androidVersion': androidInfo.version.release,
+          'sdkInt': androidInfo.version.sdkInt,
+          'product': androidInfo.product,
+          'brand': androidInfo.brand,
+          'board': androidInfo.board,
+          'hardware': androidInfo.hardware,
+        };
+      } else if (Platform.isIOS) {
+        IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+        deviceData = {
+          'platform': 'iOS',
+          'name': iosInfo.name,
+          'systemName': iosInfo.systemName,
+          'systemVersion': iosInfo.systemVersion,
+          'model': iosInfo.model,
+          'localizedModel': iosInfo.localizedModel,
+          'identifierForVendor': iosInfo.identifierForVendor,
+          'isPhysicalDevice': iosInfo.isPhysicalDevice,
+          'utsname.sysname': iosInfo.utsname.sysname,
+          'utsname.nodename': iosInfo.utsname.nodename,
+          'utsname.release': iosInfo.utsname.release,
+          'utsname.version': iosInfo.utsname.version,
+          'utsname.machine': iosInfo.utsname.machine,
+        };
+      }
+    } catch (e) {
+      print('Error getting device info: $e');
+    }
+
+    return deviceData;
+  }
+
   Future<String> stopRecording(String videoPath) async {
     if (!_isRecording) return '';
 
     _isRecording = false;
 
-    // Stop sensor subscriptions
+    // Stop all subscriptions and timers
     await _accelerometerSubscription?.cancel();
     await _gyroscopeSubscription?.cancel();
+    await _positionSubscription?.cancel();
+    _accelerometerTimer?.cancel();
+    _gyroscopeTimer?.cancel();
+    _gpsTimer?.cancel();
+
+    // Calculate actual sampling rates
+    double accelSamplingRate = _calculateActualSamplingRate(_accelerometerTimestamps);
+    double gyroSamplingRate = _calculateActualSamplingRate(_gyroscopeTimestamps);
 
     // Add end timestamp
     final endTime = DateTime.now();
     _sensorData.add([
       'end_timestamp',
+      '',
+      '',
+      '',
+      '',
       '',
       '',
       '',
@@ -259,12 +427,36 @@ class SensorService {
       '',
       '',
       '',
+      '',
+      '',
+      '',
+      '',
     ]);
 
-    // Add sampling rate info
+    // Add actual sampling rate info
     _sensorData.add([
-      'sampling_rate_hz',
-      100,  // Target sampling rate
+      'accelerometer_sampling_rate_hz',
+      accelSamplingRate.toStringAsFixed(2),
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ]);
+
+    _sensorData.add([
+      'gyroscope_sampling_rate_hz',
+      gyroSamplingRate.toStringAsFixed(2),
+      '',
+      '',
+      '',
+      '',
       '',
       '',
       '',
@@ -285,14 +477,40 @@ class SensorService {
       '',
       '',
       '',
+      '',
+      '',
+      '',
+      '',
     ]);
+
+    // Add device info
+    Map<String, dynamic> deviceData = await _getDeviceInfo();
+    _sensorData.add(['device_info', '', '', '', '', '', '', '', '', '', '', '', '']);
+
+    deviceData.forEach((key, value) {
+      _sensorData.add([
+        key,
+        value.toString(),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]);
+    });
 
     // Apply annotations to the data
     for (int i = 1; i < _sensorData.length; i++) {
       var row = _sensorData[i];
 
       // Skip metadata rows
-      if (row[1] != 'accelerometer' && row[1] != 'gyroscope') {
+      if (row[1] != 'accelerometer' && row[1] != 'gyroscope' && row[1] != 'gps') {
         continue;
       }
 
@@ -349,6 +567,10 @@ class SensorService {
   void dispose() {
     _accelerometerSubscription?.cancel();
     _gyroscopeSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _accelerometerTimer?.cancel();
+    _gyroscopeTimer?.cancel();
+    _gpsTimer?.cancel();
   }
 }
 
