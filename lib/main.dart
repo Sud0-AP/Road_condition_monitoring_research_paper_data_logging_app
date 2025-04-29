@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -5,6 +7,17 @@ import 'screens/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // For iOS, ensure we have proper permissions
+  if (Platform.isIOS) {
+    // Set system UI for iOS
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+      ),
+    );
+  }
+
   // Allow all orientations
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -12,6 +25,7 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+
   runApp(const MyApp());
 }
 

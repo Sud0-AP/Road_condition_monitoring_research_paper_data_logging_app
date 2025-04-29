@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 import '../models/recording_data.dart';
@@ -79,7 +80,9 @@ class CameraService {
     final String recordingId = const Uuid().v4();
 
     // Create directory for this recording in Downloads folder
-    final downloadsDir = Directory('/storage/emulated/0/Download/PotholeDetector');
+    final Directory downloadsDir = Platform.isAndroid
+        ? Directory('/storage/emulated/0/Download/PotholeDetector')
+        : Directory('${(await getApplicationDocumentsDirectory()).path}/PotholeDetector');
     if (!await downloadsDir.exists()) {
       await downloadsDir.create(recursive: true);
     }
