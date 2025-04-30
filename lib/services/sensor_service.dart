@@ -94,7 +94,7 @@ class SensorService {
       });
 
       // Set up timer to read at exactly 100Hz
-      _accelerometerTimer = Timer.periodic(Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
+      _accelerometerTimer = Timer.periodic(const Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
         if (_isRecording && _lastAccelEvent != null) {
           final now = DateTime.now();
           final timestamp = now.difference(_startTime!).inMilliseconds;
@@ -132,7 +132,7 @@ class SensorService {
       });
 
       // Set up timer to read at exactly 100Hz
-      _gyroscopeTimer = Timer.periodic(Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
+      _gyroscopeTimer = Timer.periodic(const Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
         if (_isRecording && _lastGyroEvent != null) {
           final now = DateTime.now();
           final timestamp = now.difference(_startTime!).inMilliseconds;
@@ -195,7 +195,7 @@ class SensorService {
     double stdDev = sqrt(variance);
 
     // Calculate delta from baseline (how much current magnitude differs from baseline)
-    double delta = abs(magnitude - _baselineAccelMagnitude);
+    double delta = (magnitude - _baselineAccelMagnitude).abs();
 
     // Check if magnitude exceeds threshold and has significant deviation
     if (delta > _bumpThreshold && stdDev > 1.0) {
@@ -457,8 +457,4 @@ class SensorService {
     _accelerometerTimer?.cancel();
     _gyroscopeTimer?.cancel();
   }
-}
-
-double abs(double value) {
-  return value < 0 ? -value : value;
 }

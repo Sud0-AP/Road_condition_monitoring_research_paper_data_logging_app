@@ -49,6 +49,8 @@
     <string>Camera access is needed to record video of road conditions</string>
     <key>NSMotionUsageDescription</key>
     <string>Motion sensors are used to detect bumps in the road</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Microphone access is needed to potentially record audio with video (currently disabled).</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>Access is needed to save pothole recordings</string>
     <key>NSPhotoLibraryUsageDescription</key>
