@@ -7,6 +7,7 @@ import '../services/camera_service.dart';
 import '../models/recording_data.dart';
 import '../widgets/pothole_prompt_overlay.dart';
 import '../widgets/threshold_adjustment_popup.dart';
+import '../widgets/calibration_popup.dart';
 import 'recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -26,17 +27,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _showingPotholePrompt = false;
   DateTime? _currentSpikeTime;
 
+  // For calibration popup
+  bool _showingCalibrationPopup = false;
+  String _currentOrientation = 'unknown';
+  double _orientationConfidence = 0.0;
+  Map<String, List<double>> _sensorOffsets = {
+    'accel': [0.0, 0.0, 0.0],
+    'gyro': [0.0, 0.0, 0.0]
+  };
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _requestPermissionsAndInitialize();
 
-    // Set the pothole detection callback
+    // Set the callbacks
     _cameraService.onPotholeDetected = _handleRealPotholeDetection;
+    _cameraService.onCalibrationComplete = _handleCalibrationComplete;
   }
 
-// Add this method to handle real pothole detection events
+  // Add this method to handle real pothole detection events
   void _handleRealPotholeDetection(DateTime detectionTime) {
     // Only show prompt if not already showing one and we're recording
     if (!_showingPotholePrompt && _cameraService.isRecording) {
@@ -45,6 +56,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _currentSpikeTime = detectionTime;
       });
     }
+  }
+
+  void _handleCalibrationComplete(String orientation, double confidence, Map<String, List<double>> offsets) {
+    setState(() {
+      _currentOrientation = orientation;
+      _orientationConfidence = confidence;
+      _sensorOffsets = offsets;
+    });
   }
 
   @override
@@ -126,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
     }
   }
+
   Future<void> _initializeCamera() async {
     setState(() {
       _isInitializing = true;
@@ -150,9 +170,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Stop recording
       if (_currentRecording != null) {
         try {
-          await _cameraService.stopRecording(_currentRecording!);
+          final recordingData = await _cameraService.stopRecording(_currentRecording!);
           setState(() {
-            _currentRecording = null;
+            _currentRecording = recordingData;
           });
 
           ScaffoldMessenger.of(context).showSnackBar(
@@ -167,13 +187,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } else {
       // Start recording
       try {
+        setState(() {
+          _showingCalibrationPopup = true;
+        });
         final recordingData = await _cameraService.startRecording();
         setState(() {
           _currentRecording = recordingData;
         });
       } catch (e) {
+        // Handle any errors
+        setState(() {
+          _showingCalibrationPopup = false;
+        });
+        print('Error starting recording: $e');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error starting recording: $e')),
+          SnackBar(
+            content: Text('Error starting recording: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -537,6 +568,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onTimeout: _handlePromptTimeout,
               isLandscape: isLandscape,
             ),
+
+          // Calibration Popup
+          if (_showingCalibrationPopup) CalibrationPopup(
+            orientation: _currentOrientation,
+            orientationConfidence: _orientationConfidence,
+            sensorOffsets: _sensorOffsets,
+            isLandscape: MediaQuery.of(context).orientation == Orientation.landscape,
+            onCalibrationComplete: () {
+              setState(() {
+                _showingCalibrationPopup = false;
+              });
+            },
+          ),
         ],
       ),
     );

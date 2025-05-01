@@ -19,12 +19,14 @@ class CameraService {
   final SensorService _sensorService = SensorService();
   SensorService get sensorService => _sensorService;
 
-  // Callback for pothole detection
+  // Callbacks
   Function(DateTime)? onPotholeDetected;
+  Function(String, double, Map<String, List<double>>)? onCalibrationComplete;
 
   CameraService() {
     // Set the callback in sensor service that will notify this class
     _sensorService.onPotholeDetected = _handlePotholeDetection;
+    _sensorService.onCalibrationComplete = onCalibrationComplete;
   }
 
   double get bumpThreshold => _sensorService.bumpThreshold;

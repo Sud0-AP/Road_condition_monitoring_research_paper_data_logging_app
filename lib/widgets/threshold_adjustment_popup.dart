@@ -28,72 +28,198 @@ class _ThresholdAdjustmentPopupState extends State<ThresholdAdjustmentPopup> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        'Bump Detection Settings',
-        style: TextStyle(fontSize: widget.isLandscape ? 18.sp : 20.sp),
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: widget.isLandscape ? 500.w : 400.w,
+          maxHeight: widget.isLandscape ? 250.h : 400.h,
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+          child: Padding(
+            padding: EdgeInsets.all(16.r),
+            child: widget.isLandscape ? _buildLandscapeLayout() : _buildPortraitLayout(),
+          ),
+        ),
       ),
-      content: SizedBox(
-        width: widget.isLandscape ? 300.w : 280.w,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    );
+  }
+
+  Widget _buildPortraitLayout() {
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+        Text(
+          'Bump Detection Settings',
+          style: TextStyle(
+            fontSize: widget.isLandscape ? 16.sp : 20.sp,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        SizedBox(height: 16.h),
+        Text(
+          'Bump Sensitivity Threshold',
+          style: TextStyle(fontSize: widget.isLandscape ? 14.sp : 16.sp),
+        ),
+        SizedBox(height: 8.h),
+        Row(
           children: [
-            Text(
-              'Bump Sensitivity Threshold',
-              style: TextStyle(fontSize: widget.isLandscape ? 14.sp : 16.sp),
-            ),
-            SizedBox(height: 8.h),
-            Row(
-              children: [
-                Text('Low', style: TextStyle(fontSize: 12.sp)),
-                Expanded(
-                  child: Slider(
-                    value: _threshold,
-                    min: 1.0,
-                    max: 10.0,
-                    divisions: 18,
-                    label: _threshold.toStringAsFixed(1),
-                    onChanged: (value) {
-                      setState(() {
-                        _threshold = value;
-                      });
-                    },
-                  ),
-                ),
-                Text('High', style: TextStyle(fontSize: 12.sp)),
-              ],
-            ),
-            SizedBox(height: 8.h),
-            Text(
-              'Current: ${_threshold.toStringAsFixed(1)}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: widget.isLandscape ? 14.sp : 16.sp,
+            Text('Low', style: TextStyle(fontSize: 12.sp)),
+            Expanded(
+              child: Slider(
+                value: _threshold,
+                min: 1.0,
+                max: 10.0,
+                divisions: 18,
+                label: _threshold.toStringAsFixed(1),
+                onChanged: (value) {
+                  setState(() {
+                    _threshold = value;
+                  });
+                },
               ),
             ),
-            SizedBox(height: 8.h),
-            Text(
-              'Lower values increase sensitivity (more bump detections).\n'
-                  'Higher values decrease sensitivity (fewer detections).',
-              style: TextStyle(fontSize: 12.sp, color: Colors.grey),
-              textAlign: TextAlign.center,
+            Text('High', style: TextStyle(fontSize: 12.sp)),
+          ],
+        ),
+        SizedBox(height: 8.h),
+        Text(
+          'Current: ${_threshold.toStringAsFixed(1)}',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: widget.isLandscape ? 14.sp : 16.sp,
+          ),
+        ),
+        SizedBox(height: 8.h),
+        Text(
+          'Lower values increase sensitivity (more bump detections).\n'
+          'Higher values decrease sensitivity (fewer detections).',
+          style: TextStyle(fontSize: 12.sp, color: Colors.grey),
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: 16.h),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            SizedBox(width: 8.w),
+            TextButton(
+              onPressed: () {
+                widget.onThresholdChanged(_threshold);
+                Navigator.pop(context);
+              },
+              child: const Text('Apply'),
             ),
           ],
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+      ],
+    )
+    );
+  }
+
+  Widget _buildLandscapeLayout() {
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+        Text(
+          'Bump Detection Settings',
+          style: TextStyle(
+            fontSize: 16.sp,
+            fontWeight: FontWeight.bold,
+          ),
         ),
-        TextButton(
-          onPressed: () {
-            widget.onThresholdChanged(_threshold);
-            Navigator.pop(context);
-          },
-          child: const Text('Apply'),
+        SizedBox(height: 12.h),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bump Sensitivity Threshold',
+                    style: TextStyle(fontSize: 14.sp),
+                  ),
+                  SizedBox(height: 8.h),
+                  Row(
+                    children: [
+                      Text('Low', style: TextStyle(fontSize: 12.sp)),
+                      Expanded(
+                        child: Slider(
+                          value: _threshold,
+                          min: 1.0,
+                          max: 10.0,
+                          divisions: 18,
+                          label: _threshold.toStringAsFixed(1),
+                          onChanged: (value) {
+                            setState(() {
+                              _threshold = value;
+                            });
+                          },
+                        ),
+                      ),
+                      Text('High', style: TextStyle(fontSize: 12.sp)),
+                    ],
+                  ),
+                  Text(
+                    'Current: ${_threshold.toStringAsFixed(1)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14.sp,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: 16.w),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Note:',
+                    style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 4.h),
+                  Text(
+                    'Lower values increase sensitivity (more bump detections).\n'
+                    'Higher values decrease sensitivity (fewer detections).',
+                    style: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 16.h),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            SizedBox(width: 8.w),
+            TextButton(
+              onPressed: () {
+                widget.onThresholdChanged(_threshold);
+                Navigator.pop(context);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
         ),
       ],
+    )
     );
   }
 }
