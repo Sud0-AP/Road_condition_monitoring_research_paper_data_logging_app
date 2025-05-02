@@ -5,10 +5,10 @@ import 'package:csv/csv.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:collection/collection.dart';
 
 class SensorService {
   List<List<dynamic>> _sensorData = [];
-  final Map<int, Map<String, dynamic>> _pendingSensorData = {};
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
   bool _isRecording = false;
@@ -20,8 +20,7 @@ class SensorService {
   List<int> _gyroscopeTimestamps = [];
 
   // Timer to enforce 100Hz sampling
-  Timer? _accelerometerTimer;
-  Timer? _gyroscopeTimer;
+  Timer? _samplingTimer;
   static const int _targetSamplingIntervalMs = 10; // 100Hz = 10ms interval
 
   // For pothole annotations
@@ -32,12 +31,15 @@ class SensorService {
 
   // For bump detection
   final List<AccelerometerEvent> _recentAccelReadings = [];
-  static const int _bufferSize = 50; // Store last 50 readings (approx 0.5 seconds at 100Hz)
+  static const int _bufferSize =
+      50; // Store last 50 readings (approx 0.5 seconds at 100Hz)
   double _baselineAccelMagnitude = 9.8; // Starting with standard gravity
   int _calibrationReadings = 0;
-  static const int _calibrationSize = 200; // Calibration period (approx 2 seconds)
+  static const int _calibrationSize =
+      200; // Calibration period (approx 2 seconds)
   static double _bumpThreshold = 5.0;
-  static const int _cooldownMs = 3000; // Minimum time between detections (3 seconds)
+  static const int _cooldownMs =
+      3000; // Minimum time between detections (3 seconds)
   DateTime? _lastDetectionTime;
 
   // Last sensor readings to ensure fixed rate
@@ -55,7 +57,8 @@ class SensorService {
   };
 
   // For low-pass filtering
-  static const double _alpha = 0.8; // Filter coefficient (0 = no filtering, 1 = max filtering)
+  static const double _alpha =
+      0.8; // Filter coefficient (0 = no filtering, 1 = max filtering)
   List<double> _filteredAccel = [0.0, 0.0, 0.0];
   bool _isFirstReading = true;
 
@@ -105,10 +108,12 @@ class SensorService {
     };
 
     // Wait 1 second for sensors to start collecting data
-    print('Please keep the device still in the mount for initial orientation detection...');
+    print(
+        'Please keep the device still in the mount for initial orientation detection...');
     Future.delayed(const Duration(seconds: 1), () {
       // Initial notification with default values
-      onCalibrationComplete?.call(_deviceOrientation, _orientationConfidence, _sensorOffsets);
+      onCalibrationComplete?.call(
+          _deviceOrientation, _orientationConfidence, _sensorOffsets);
     });
 
     // Add header with metadata and annotation columns
@@ -128,123 +133,125 @@ class SensorService {
     ]);
 
     try {
-      // Start accelerometer recording with fixed timing
-      _accelerometerSubscription = accelerometerEvents.listen((AccelerometerEvent event) {
+      // Start accelerometer recording - just update the last known event
+      _accelerometerSubscription =
+          accelerometerEvents.listen((AccelerometerEvent event) {
         _lastAccelEvent = event; // Save the most recent event
-        if (_calibrationAccelData.length < 100) { // Collect first 100 samples for calibration
+        if (_calibrationAccelData.length < 100) {
+          // Collect first 100 samples for calibration
           _calibrationAccelData.add(event);
           // Call _startCalibration for each new sample during calibration
-          if (_calibrationAccelData.length >= 10) { // Start processing after 10 samples
+          if (_calibrationAccelData.length >= 10) {
+            // Start processing after 10 samples
             _processCalibrationData();
           }
         }
       });
 
-      // Set up timer to read at exactly 100Hz
-      _accelerometerTimer = Timer.periodic(const Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
-        if (_isRecording && _lastAccelEvent != null) {
-          final now = DateTime.now();
-          final timestamp = now.difference(_startTime!).inMilliseconds;
-          _accelerometerTimestamps.add(timestamp);
-
-          // Apply orientation correction
-          double correctedX = _lastAccelEvent!.x;
-          double correctedY = _lastAccelEvent!.y;
-          double correctedZ = _lastAccelEvent!.z;
-
-          // Apply orientation correction based on device orientation
-          switch (_deviceOrientation) {
-            case 'landscape_left':
-              // For landscape left:
-              // accel_x' = accel_y
-              // accel_y' = -accel_x
-              correctedX = _lastAccelEvent!.y;
-              correctedY = -_lastAccelEvent!.x;
-              break;
-            case 'landscape_right':
-              // For landscape right:
-              // accel_x' = -accel_y
-              // accel_y' = accel_x
-              correctedX = -_lastAccelEvent!.y;
-              correctedY = _lastAccelEvent!.x;
-              break;
-            default:
-              // For portrait or unknown orientation, use original values
-              break;
-          }
-
-          // Calculate magnitude using corrected values
-          final magnitude = sqrt(
-              correctedX * correctedX +
-              correctedY * correctedY +
-              correctedZ * correctedZ);
-
-          // Create corrected event for bump detection
-          final correctedEvent = AccelerometerEvent(correctedX, correctedY, correctedZ);
-          
-          // Process for bump detection using corrected values
-          _processBumpDetection(correctedEvent, magnitude, now);
-
-          // Store accelerometer data in pending map
-          _pendingSensorData[timestamp] = _pendingSensorData[timestamp] ?? {};
-          _pendingSensorData[timestamp]!['accel'] = {
-            'x': correctedX,
-            'y': correctedY,
-            'z': correctedZ,
-            'magnitude': magnitude
-          };
-          
-          // If we have both accelerometer and gyroscope data for this timestamp, write to CSV
-          if (_pendingSensorData[timestamp]?.containsKey('gyro') ?? false) {
-            _writeSensorDataRow(timestamp);
-          }
-        }
-      });
-    } catch (e) {
-      print("Failed to initialize accelerometer: $e");
-    }
-
-    try {
-      // Start gyroscope recording with fixed timing
+      // Start gyroscope recording - just update the last known event
       _gyroscopeSubscription = gyroscopeEvents.listen((GyroscopeEvent event) {
         _lastGyroEvent = event; // Save the most recent event
-        if (_calibrationGyroData.length < 100) { // Collect first 100 samples for calibration
+        if (_calibrationGyroData.length < 100) {
+          // Collect first 100 samples for calibration
           _calibrationGyroData.add(event);
           // Process gyro data whenever we have new samples
-          if (_calibrationGyroData.length >= 10) { // Start processing after 10 samples
+          if (_calibrationGyroData.length >= 10) {
+            // Start processing after 10 samples
             _processGyroData();
           }
         }
       });
 
-      // Set up timer to read at exactly 100Hz
-      _gyroscopeTimer = Timer.periodic(const Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
-        if (_isRecording && _lastGyroEvent != null) {
+      // Set up ONE timer to sample at exactly 100Hz
+      _samplingTimer = Timer.periodic(
+          const Duration(milliseconds: _targetSamplingIntervalMs), (timer) {
+        if (_isRecording && _startTime != null) {
+          // Check _startTime for safety
           final now = DateTime.now();
-          final timestamp = now.difference(_startTime!).inMilliseconds;
-          _gyroscopeTimestamps.add(timestamp);
+          final timestampMs = now.difference(_startTime!).inMilliseconds;
 
-          // Store gyroscope data in pending map
-          _pendingSensorData[timestamp] = _pendingSensorData[timestamp] ?? {};
-          _pendingSensorData[timestamp]!['gyro'] = {
-            'x': _lastGyroEvent!.x,
-            'y': _lastGyroEvent!.y,
-            'z': _lastGyroEvent!.z
-          };
-          
-          // If we have both accelerometer and gyroscope data for this timestamp, write to CSV
-          if (_pendingSensorData[timestamp]?.containsKey('accel') ?? false) {
-            _writeSensorDataRow(timestamp);
+          // Use the *last available* readings. Handle cases where sensors might not have started yet.
+          final currentAccel = _lastAccelEvent;
+          final currentGyro = _lastGyroEvent;
+
+          if (currentAccel != null) {
+            _accelerometerTimestamps
+                .add(timestampMs); // Track timestamps for rate calculation
+
+            // Apply orientation correction
+            double correctedX = currentAccel.x;
+            double correctedY = currentAccel.y;
+            double correctedZ = currentAccel.z;
+
+            // Apply orientation correction based on device orientation
+            switch (_deviceOrientation) {
+              case 'landscape_left':
+                correctedX = currentAccel.y;
+                correctedY = -currentAccel.x;
+                break;
+              case 'landscape_right':
+                correctedX = -currentAccel.y;
+                correctedY = currentAccel.x;
+                break;
+              default:
+                break;
+            }
+
+            // Calculate magnitude using corrected values
+            final magnitude = sqrt(correctedX * correctedX +
+                correctedY * correctedY +
+                correctedZ * correctedZ);
+
+            // Create corrected event for bump detection
+            final correctedEvent =
+                AccelerometerEvent(correctedX, correctedY, correctedZ);
+
+            // Process for bump detection using corrected values
+            _processBumpDetection(correctedEvent, magnitude, now);
+
+            // Get gyro data (use 0s if not available yet)
+            final gyroX = currentGyro?.x ?? 0.0;
+            final gyroY = currentGyro?.y ?? 0.0;
+            final gyroZ = currentGyro?.z ?? 0.0;
+
+            if (currentGyro != null) {
+              _gyroscopeTimestamps
+                  .add(timestampMs); // Also track gyro timestamps if available
+            }
+
+            // Write data row directly
+            _sensorData.add([
+              timestampMs,
+              correctedX,
+              correctedY,
+              correctedZ,
+              magnitude,
+              gyroX,
+              gyroY,
+              gyroZ,
+              '', // is_pothole
+              '', // user_feedback
+              '', // empty for recording_start_time column
+            ]);
+          } else {
+            // Optional: Log if accelerometer data is missing after some time?
+            // print("Warning: Missing accelerometer data at timestamp $timestampMs");
           }
         }
       });
     } catch (e) {
-      print("Failed to initialize gyroscope: $e");
+      print("Failed to initialize sensors or timer: $e");
+      // Attempt cleanup if error occurs during setup
+      _isRecording = false;
+      _accelerometerSubscription?.cancel();
+      _gyroscopeSubscription?.cancel();
+      _samplingTimer?.cancel();
     }
   }
 
   // Process accelerometer data for bump detection
-  void _processBumpDetection(AccelerometerEvent event, double magnitude, DateTime now) {
+  void _processBumpDetection(
+      AccelerometerEvent event, double magnitude, DateTime now) {
     // Add to recent readings buffer
     _recentAccelReadings.add(event);
     if (_recentAccelReadings.length > _bufferSize) {
@@ -254,14 +261,17 @@ class SensorService {
     // First calibrate to establish baseline
     if (_calibrationReadings < _calibrationSize) {
       // During calibration, update baseline
-      _baselineAccelMagnitude = (_baselineAccelMagnitude * _calibrationReadings + magnitude) / (_calibrationReadings + 1);
+      _baselineAccelMagnitude =
+          (_baselineAccelMagnitude * _calibrationReadings + magnitude) /
+              (_calibrationReadings + 1);
       _calibrationReadings++;
       return; // Skip detection during calibration
     }
 
     // Check for cooldown period
     if (_lastDetectionTime != null) {
-      final timeSinceLastDetection = now.difference(_lastDetectionTime!).inMilliseconds;
+      final timeSinceLastDetection =
+          now.difference(_lastDetectionTime!).inMilliseconds;
       if (timeSinceLastDetection < _cooldownMs) {
         return; // Still in cooldown period
       }
@@ -272,13 +282,15 @@ class SensorService {
     double sumSquared = 0;
 
     for (var accel in _recentAccelReadings) {
-      double readingMagnitude = sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+      double readingMagnitude =
+          sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
       sum += readingMagnitude;
       sumSquared += readingMagnitude * readingMagnitude;
     }
 
     double mean = sum / _recentAccelReadings.length;
-    double variance = (sumSquared / _recentAccelReadings.length) - (mean * mean);
+    double variance =
+        (sumSquared / _recentAccelReadings.length) - (mean * mean);
     double stdDev = sqrt(variance);
 
     // Calculate delta from baseline (how much current magnitude differs from baseline)
@@ -294,7 +306,8 @@ class SensorService {
         onPotholeDetected!(now);
       }
 
-      print('Bump detected! Magnitude: $magnitude, Delta: $delta, StdDev: $stdDev');
+      print(
+          'Bump detected! Magnitude: $magnitude, Delta: $delta, StdDev: $stdDev');
     }
 
     // Gradually update baseline (adaptive baseline)
@@ -303,10 +316,12 @@ class SensorService {
   }
 
   // Method to annotate a pothole event
-  void annotatePothole(DateTime detectionTime, bool isPothole, String feedback) {
+  void annotatePothole(
+      DateTime detectionTime, bool isPothole, String feedback) {
     if (_startTime == null || !_isRecording) return;
 
-    final detectionTimestampMs = detectionTime.difference(_startTime!).inMilliseconds;
+    final detectionTimestampMs =
+        detectionTime.difference(_startTime!).inMilliseconds;
 
     _annotations[detectionTimestampMs] = {
       'isPothole': isPothole,
@@ -314,7 +329,8 @@ class SensorService {
       'timestamp': detectionTimestampMs,
     };
 
-    print('Annotated pothole at ${detectionTimestampMs}ms: isPothole=$isPothole, feedback=$feedback');
+    print(
+        'Annotated pothole at ${detectionTimestampMs}ms: isPothole=$isPothole, feedback=$feedback');
   }
 
   // Calculate actual sampling rate from timestamp data
@@ -324,7 +340,7 @@ class SensorService {
     // Calculate time differences between consecutive samples
     List<int> intervals = [];
     for (int i = 1; i < timestamps.length; i++) {
-      intervals.add(timestamps[i] - timestamps[i-1]);
+      intervals.add(timestamps[i] - timestamps[i - 1]);
     }
 
     // Calculate average interval
@@ -387,12 +403,13 @@ class SensorService {
     // Stop all subscriptions and timers
     await _accelerometerSubscription?.cancel();
     await _gyroscopeSubscription?.cancel();
-    _accelerometerTimer?.cancel();
-    _gyroscopeTimer?.cancel();
+    _samplingTimer?.cancel();
 
-    // Calculate actual sampling rates
-    double accelSamplingRate = _calculateActualSamplingRate(_accelerometerTimestamps);
-    double gyroSamplingRate = _calculateActualSamplingRate(_gyroscopeTimestamps);
+    // Calculate actual sampling rates (based on timestamps recorded in the single timer)
+    double accelSamplingRate =
+        _calculateActualSamplingRate(_accelerometerTimestamps);
+    double gyroSamplingRate = _calculateActualSamplingRate(
+        _gyroscopeTimestamps); // Gyro rate might be lower if it started later
 
     // Add end timestamp
     final endTime = DateTime.now();
@@ -481,7 +498,7 @@ class SensorService {
     _sensorData.add([
       'sensor_offsets',
       'accel:${_sensorOffsets['accel']![0].toStringAsFixed(3)},${_sensorOffsets['accel']![1].toStringAsFixed(3)},${_sensorOffsets['accel']![2].toStringAsFixed(3)};'
-      'gyro:${_sensorOffsets['gyro']![0].toStringAsFixed(3)},${_sensorOffsets['gyro']![1].toStringAsFixed(3)},${_sensorOffsets['gyro']![2].toStringAsFixed(3)}',
+          'gyro:${_sensorOffsets['gyro']![0].toStringAsFixed(3)},${_sensorOffsets['gyro']![1].toStringAsFixed(3)},${_sensorOffsets['gyro']![2].toStringAsFixed(3)}',
       '',
       '',
       '',
@@ -506,37 +523,63 @@ class SensorService {
     });
 
     // Apply annotations to the data
-    for (int i = 1; i < _sensorData.length; i++) {
-      var row = _sensorData[i];
+    // Find the timestamp column index dynamically, assuming it's the first one
+    int timestampColIndex =
+        0; // Assuming 'timestamp_ms' is the first column (index 0)
+    int isPotholeColIndex = -1;
+    int feedbackColIndex = -1;
 
-      // Skip metadata rows
-      if (row[1] != 'accelerometer' && row[1] != 'gyroscope') {
-        continue;
-      }
+    // Find the correct column indices from the header row
+    if (_sensorData.isNotEmpty) {
+      var header = _sensorData[0];
+      isPotholeColIndex = header.indexWhere((col) => col == 'is_pothole');
+      feedbackColIndex = header.indexWhere((col) => col == 'user_feedback');
+      // timestampColIndex = header.indexWhere((col) => col == 'timestamp_ms'); // Already assumed 0
+    }
 
-      int timestamp = row[0] as int;
+    if (isPotholeColIndex != -1 && feedbackColIndex != -1) {
+      for (int i = 1; i < _sensorData.length; i++) {
+        // Start from 1 to skip header
+        var row = _sensorData[i];
 
-      // Check each annotation to see if this data point falls within its window
-      for (var entry in _annotations.entries) {
-        int detectionTime = entry.key;
-        var annotation = entry.value;
-
-        // If within 10 seconds before or after a detection
-        if (timestamp >= detectionTime - 10000 && timestamp <= detectionTime + 10000) {
-          // Mark as pothole or not based on feedback
-          if (annotation['feedback'] == 'yes') {
-            row[6] = 'yes';
-            row[7] = 'user_confirmed';
-          } else if (annotation['feedback'] == 'no') {
-            row[6] = 'no';
-            row[7] = 'user_rejected';
-          } else if (annotation['feedback'] == 'timeout') {
-            row[6] = 'unmarked';
-            row[7] = 'timeout';
-          }
-          break;
+        // Skip metadata rows or rows with incorrect structure
+        if (row.length <= timestampColIndex || row[timestampColIndex] is! int) {
+          continue;
         }
+
+        int timestamp = row[timestampColIndex] as int;
+
+        // Use firstWhereOrNull from collection package for cleaner annotation lookup
+        final annotationEntry = _annotations.entries.firstWhereOrNull((entry) {
+          int detectionTime = entry.key;
+          // Check if timestamp is within the +/- 10-second window
+          return timestamp >= detectionTime - 10000 &&
+              timestamp <= detectionTime + 10000;
+        });
+
+        if (annotationEntry != null) {
+          var annotation = annotationEntry.value;
+          // Ensure row has enough columns before trying to write
+          if (row.length > max(isPotholeColIndex, feedbackColIndex)) {
+            if (annotation['feedback'] == 'yes') {
+              row[isPotholeColIndex] = 'yes';
+              row[feedbackColIndex] = 'user_confirmed';
+            } else if (annotation['feedback'] == 'no') {
+              row[isPotholeColIndex] = 'no';
+              row[feedbackColIndex] = 'user_rejected';
+            } else if (annotation['feedback'] == 'timeout') {
+              row[isPotholeColIndex] = 'unmarked'; // Changed from ''
+              row[feedbackColIndex] = 'timeout';
+            }
+          } else {
+            print("Warning: Row $i has insufficient columns for annotation.");
+          }
+        }
+        // If no annotation matches, the default '' values remain
       }
+    } else {
+      print(
+          "Warning: Could not find 'is_pothole' or 'user_feedback' columns in header.");
     }
 
     // Determine where to save the CSV file
@@ -596,10 +639,11 @@ class SensorService {
     }
 
     // Check if there's too much movement during calibration
-    double maxAllowedVariance = 2.0; // m/s² - increased threshold for car vibration
-    bool isStable = maxVarianceX <= maxAllowedVariance && 
-                    maxVarianceY <= maxAllowedVariance && 
-                    maxVarianceZ <= maxAllowedVariance;
+    double maxAllowedVariance =
+        2.0; // m/s² - increased threshold for car vibration
+    bool isStable = maxVarianceX <= maxAllowedVariance &&
+        maxVarianceY <= maxAllowedVariance &&
+        maxVarianceZ <= maxAllowedVariance;
 
     if (!isStable) {
       print('Warning: Device movement detected during orientation calibration');
@@ -612,7 +656,8 @@ class SensorService {
       _isFirstReading = false;
     } else {
       for (int i = 0; i < 3; i++) {
-        _filteredAccel[i] = _alpha * _filteredAccel[i] + (1 - _alpha) * meanValues[i];
+        _filteredAccel[i] =
+            _alpha * _filteredAccel[i] + (1 - _alpha) * meanValues[i];
       }
     }
 
@@ -620,15 +665,14 @@ class SensorService {
     _sensorOffsets['accel'] = List.from(_filteredAccel);
 
     // Calculate magnitude of filtered values
-    double magnitude = sqrt(
-      _filteredAccel[0] * _filteredAccel[0] + 
-      _filteredAccel[1] * _filteredAccel[1] + 
-      _filteredAccel[2] * _filteredAccel[2]
-    );
+    double magnitude = sqrt(_filteredAccel[0] * _filteredAccel[0] +
+        _filteredAccel[1] * _filteredAccel[1] +
+        _filteredAccel[2] * _filteredAccel[2]);
 
     // Normalize relative to gravity
     List<double> normalizedAccel = List.from(_filteredAccel);
-    if (magnitude > 0.1) { // Avoid division by very small numbers
+    if (magnitude > 0.1) {
+      // Avoid division by very small numbers
       for (int i = 0; i < 3; i++) {
         normalizedAccel[i] = normalizedAccel[i] / magnitude * 9.81;
       }
@@ -641,7 +685,7 @@ class SensorService {
 
     // Find maximum acceleration component
     double maxAcc = max(max(absX, absY), absZ);
-    
+
     // Calculate confidence as percentage of gravity
     _orientationConfidence = (maxAcc / 9.81) * 100;
 
@@ -652,25 +696,31 @@ class SensorService {
     if (absZ > threshold && absZ >= absX && absZ >= absY) {
       newOrientation = normalizedAccel[2] > 0 ? 'face_up' : 'face_down';
     } else if (absX >= threshold && absX >= absY) {
-      newOrientation = normalizedAccel[0] > 0 ? 'landscape_left' : 'landscape_right';
+      newOrientation =
+          normalizedAccel[0] > 0 ? 'landscape_left' : 'landscape_right';
     } else if (absY >= threshold) {
       newOrientation = normalizedAccel[1] > 0 ? 'portrait' : 'portrait_down';
     } else {
       // If no clear orientation, keep previous orientation but with low confidence
-      newOrientation = _deviceOrientation.split('_')[0]; // Remove any existing uncertainty marker
-      _orientationConfidence = min(_orientationConfidence, 50.0); // Cap confidence at 50%
+      newOrientation = _deviceOrientation
+          .split('_')[0]; // Remove any existing uncertainty marker
+      _orientationConfidence =
+          min(_orientationConfidence, 50.0); // Cap confidence at 50%
     }
 
     // Set the initial orientation - this will remain fixed for the recording session
     if (_deviceOrientation == 'unknown' || _orientationConfidence > 60.0) {
       _deviceOrientation = newOrientation;
-      print('Initial device orientation detected: $_deviceOrientation (Confidence: ${_orientationConfidence.toStringAsFixed(1)}%)');
+      print(
+          'Initial device orientation detected: $_deviceOrientation (Confidence: ${_orientationConfidence.toStringAsFixed(1)}%)');
       if (_orientationConfidence < 80.0) {
         print('Warning: Low confidence in orientation detection.');
-        print('Ensure the device is firmly mounted and try starting recording again.');
+        print(
+            'Ensure the device is firmly mounted and try starting recording again.');
       }
       // Notify about calibration progress
-      onCalibrationComplete?.call(_deviceOrientation, _orientationConfidence, _sensorOffsets);
+      onCalibrationComplete?.call(
+          _deviceOrientation, _orientationConfidence, _sensorOffsets);
     }
 
     if (_calibrationGyroData.isNotEmpty) {
@@ -706,40 +756,13 @@ class SensorService {
     ];
 
     // Notify about calibration progress
-    onCalibrationComplete?.call(_deviceOrientation, _orientationConfidence, _sensorOffsets);  
-  }
-
-  void _writeSensorDataRow(int timestamp) {
-    if (_pendingSensorData.containsKey(timestamp) && 
-        _pendingSensorData[timestamp]!.containsKey('accel') && 
-        _pendingSensorData[timestamp]!.containsKey('gyro')) {
-      final accelData = _pendingSensorData[timestamp]!['accel'] as Map<String, dynamic>;
-      final gyroData = _pendingSensorData[timestamp]!['gyro'] as Map<String, dynamic>;
-      
-      _sensorData.add([
-        timestamp,
-        accelData['x'],
-        accelData['y'],
-        accelData['z'],
-        accelData['magnitude'],
-        gyroData['x'],
-        gyroData['y'],
-        gyroData['z'],
-        '',  // is_pothole (will be filled later)
-        '',  // user_feedback (will be filled later)
-        '',  // empty for recording_start_time column
-      ]);
-      
-      // Remove processed data to prevent memory leaks
-      _pendingSensorData.remove(timestamp);
-    }
+    onCalibrationComplete?.call(
+        _deviceOrientation, _orientationConfidence, _sensorOffsets);
   }
 
   void dispose() {
     _accelerometerSubscription?.cancel();
     _gyroscopeSubscription?.cancel();
-    _accelerometerTimer?.cancel();
-    _gyroscopeTimer?.cancel();
-    _pendingSensorData.clear();
+    _samplingTimer?.cancel();
   }
 }
